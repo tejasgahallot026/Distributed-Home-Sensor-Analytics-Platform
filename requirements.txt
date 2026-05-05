@@ -3,7 +3,7 @@ Flask-SQLAlchemy==3.0.5
 Flask-Migrate==4.0.5
 Flask-CORS==4.0.0
 paho-mqtt==1.6.1
-sqlalchemy==2.0.23
+SQLAlchemy==2.0.19  # Fixed version
 psycopg2-binary==2.9.9
 gunicorn==21.2.0
 plotly==5.17.0
