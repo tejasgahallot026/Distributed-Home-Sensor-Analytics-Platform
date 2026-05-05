@@ -1,7 +1,15 @@
 import os
 
 class Config:
-    SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key'
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL').replace("postgres://", "postgresql://") if os.environ.get('DATABASE_URL') else 'sqlite:///sensors.db'
+    SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-me'
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', '').replace("postgres://", "postgresql://")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    MQTT_BROKER_URL = os.environ.get('MQTT_BROKER_URL', 'mqtt://mosquitto:1883')
+    JSON_SORT_KEYS = False
+    MQTT_BROKER_URL = os.environ.get('MQTT_BROKER_URL', 'mqtt://localhost:1883')
+
+class DevelopmentConfig(Config):
+    DEBUG = True
+    SQLALCHEMY_ECHO = False
+
+class ProductionConfig(Config):
+    DEBUG = False
