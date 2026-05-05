@@ -1,0 +1,42 @@
+version: '3.8'
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    ports:
+      - "1883:1883"
+    restart: unless-stopped
+  
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: sensors
+      POSTGRES_USER: sensor_user
+      POSTGRES_PASSWORD: sensor_pass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+  
+  web:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_URL=postgresql://sensor_user:sensor_pass@db:5432/sensors
+      - MQTT_BROKER_URL=mqtt://mosquitto:1883
+    depends_on:
+      - db
+      - mosquitto
+    restart: unless-stopped
+  
+  simulator:
+    build: .
+    command: python sensors/sensor_simulator.py
+    environment:
+      - MQTT_BROKER_URL=mqtt://mosquitto:1883
+    depends_on:
+      - mosquitto
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
