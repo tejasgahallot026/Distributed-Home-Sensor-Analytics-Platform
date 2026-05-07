@@ -3,7 +3,7 @@ services:
     name: home-sensor-platform
     env: python
     buildCommand: pip install -r requirements.txt && pip install gunicorn
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 3 app:create_app()
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 3 --factory app:create_app
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.11
