@@ -8,9 +8,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 try:
     from app import create_app
     application = create_app()
-    print("🚀 Flask app created successfully!")
+    print("Flask app created successfully.")
 except Exception as e:
-    print(f"❌ App creation failed: {e}")
+    print(f"App creation failed: {e}")
     raise
 
 if __name__ == "__main__":
