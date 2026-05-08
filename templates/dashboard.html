@@ -2,17 +2,19 @@
 <html>
 <head>
     <title>Home Sensor Dashboard</title>
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-900 text-white">
     <div class="container mx-auto p-8">
-        <h1 class="text-4xl font-bold mb-8">🏠 Home Sensor Analytics</h1>
-        
+        <h1 class="text-4xl font-bold mb-8">Home Sensor Analytics</h1>
+
+        <p id="chart-status" class="mb-4 text-sm text-gray-400 hidden"></p>
+
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
             <!-- Device Status Cards -->
         </div>
-        
+
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div class="bg-gray-800 p-6 rounded-lg">
                 <h2 class="text-2xl font-bold mb-4">Temperature Trends (24h)</h2>
@@ -22,22 +24,52 @@
     </div>
 
     <script>
-        // Fetch and render chart data
+        const statusEl = document.getElementById('chart-status');
+
+        function showStatus(msg, isError) {
+            statusEl.textContent = msg;
+            statusEl.classList.remove('hidden', 'text-red-400', 'text-gray-400', 'text-amber-300');
+            statusEl.classList.add(isError ? 'text-red-400' : 'text-amber-300');
+        }
+
         fetch('/api/chart-data')
-            .then(response => response.json())
-            .then(data => {
+            .then(function (response) {
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status + ' loading chart data');
+                }
+                return response.json();
+            })
+            .then(function (data) {
+                if (!Array.isArray(data)) {
+                    throw new Error('Chart API did not return a JSON array');
+                }
+                if (data.length === 0) {
+                    showStatus(
+                        'No temperature readings in the last 24 hours. If you use the demo seed: set DEMO_SEED_SECRET on Render, deploy, then run: curl -X POST YOUR_SITE/api/demo/seed -H "X-Demo-Seed-Secret: YOUR_SECRET"',
+                        false
+                    );
+                } else {
+                    statusEl.classList.add('hidden');
+                }
                 const traces = [{
-                    x: data.map(d => new Date(d.timestamp)),
-                    y: data.map(d => d.value),
+                    x: data.map(function (d) { return new Date(d.timestamp); }),
+                    y: data.map(function (d) { return d.value; }),
                     type: 'scatter',
                     mode: 'lines+markers',
-                    name: 'Temperature (°C)'
+                    name: 'Temperature (C)'
                 }];
-                
                 Plotly.newPlot('temp-chart', traces, {
                     title: 'Temperature Over Time',
                     xaxis: { title: 'Time' },
-                    yaxis: { title: 'Temperature (°C)' }
+                    yaxis: { title: 'Temperature (C)' }
+                });
+            })
+            .catch(function (err) {
+                showStatus('Could not load chart: ' + err.message, true);
+                Plotly.newPlot('temp-chart', [], {
+                    title: 'Temperature Over Time',
+                    xaxis: { title: 'Time' },
+                    yaxis: { title: 'Temperature (C)' }
                 });
             });
     </script>

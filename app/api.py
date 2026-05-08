@@ -8,6 +8,30 @@ import random
 
 api_bp = Blueprint('api', __name__)
 
+
+@api_bp.route('/chart-data', methods=['GET'])
+def chart_data():
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    recent_data = (
+        SensorReading.query.filter(
+            SensorReading.sensor_type == 'temperature',
+            SensorReading.timestamp >= cutoff,
+        )
+        .order_by(SensorReading.timestamp)
+        .all()
+    )
+    return jsonify(
+        [
+            {
+                'timestamp': r.timestamp.isoformat(),
+                'value': r.value,
+                'device_id': r.device_id,
+            }
+            for r in recent_data
+        ]
+    )
+
+
 @api_bp.route('/sensors/<device_id>', methods=['GET'])
 def get_sensor_data(device_id):
     time_window = request.args.get('window', '1h')
