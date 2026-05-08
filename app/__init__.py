@@ -15,10 +15,18 @@ def create_app():
     template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "templates")
     app = Flask(__name__, template_folder=template_dir)
 
-    from app.config import DevelopmentConfig, ProductionConfig
+    from app.config import DevelopmentConfig, ProductionConfig, resolve_sqlalchemy_database_uri
 
     env = os.environ.get("FLASK_ENV", "production")
     app.config.from_object(DevelopmentConfig if env == "development" else ProductionConfig)
+
+    db_uri = resolve_sqlalchemy_database_uri()
+    if not db_uri:
+        raise RuntimeError(
+            "DATABASE_URL is not set. In Render: Web Service → Environment → Link your PostgreSQL "
+            "database (or add DATABASE_URL manually from the database's Connections tab)."
+        )
+    app.config["SQLALCHEMY_DATABASE_URI"] = db_uri
 
     db.init_app(app)
     migrate.init_app(app, db)
