@@ -3,5 +3,5 @@ Flask-SQLAlchemy==3.1.1
 SQLAlchemy==2.0.36
 Flask-Cors==4.0.1
 paho-mqtt==1.6.1
-psycopg2-binary==2.9.9
+psycopg2-binary==2.9.10
 gunicorn==22.0.0
