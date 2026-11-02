@@ -1,77 +1,159 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-    <title>Home Sensor Dashboard</title>
-    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home Sensor Analytics</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #F3F5F4; --panel: #FFFFFF; --ink: #1B2421; --muted: #5E6B66; --line: #DDE3E0;
+    --accent: #1F7A5C; --warn-bg: #FFF4DC; --warn: #8A5A00; --bad: #B03A2E; --good: #1F7A5C;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121715; --panel: #1A211E; --ink: #E5ECE9; --muted: #9AA8A2; --line: #2C3632;
+            --accent: #4CC497; --warn-bg: #3A2F14; --warn: #F2C46B; --bad: #F08A7E; --good: #4CC497; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); line-height: 1.45; }
+  main { max-width: 1180px; margin: 0 auto; padding: 28px 20px 48px; }
+  header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px; margin-bottom: 18px; }
+  h1 { font-size: 1.6rem; margin: 0; }
+  .sub { color: var(--muted); margin: 4px 0 0; }
+  .controls { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: .9rem; }
+  select { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+  .banner { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: .95rem; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .card, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .card { padding: 14px 16px; }
+  .card .label { color: var(--muted); font-size: .85rem; }
+  .card .value { font-size: 1.6rem; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin-bottom: 16px; }
+  .panel { padding: 16px; min-width: 0; }
+  .panel h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  .chartbox { position: relative; height: 240px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; }
+  td.wrap { white-space: normal; word-break: break-word; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: .8rem; font-weight: 600; }
+  .online { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+  .offline { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+  .empty { color: var(--muted); padding: 10px 0; }
+  footer { color: var(--muted); font-size: .85rem; margin-top: 20px; }
+  code { font-size: .85em; }
+</style>
 </head>
-<body class="bg-gray-900 text-white">
-    <div class="container mx-auto p-8">
-        <h1 class="text-4xl font-bold mb-8">Home Sensor Analytics</h1>
-
-        <p id="chart-status" class="mb-4 text-sm text-gray-400 hidden"></p>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-            <!-- Device Status Cards -->
-        </div>
-
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div class="bg-gray-800 p-6 rounded-lg">
-                <h2 class="text-2xl font-bold mb-4">Temperature Trends (24h)</h2>
-                <div id="temp-chart" style="height: 400px;"></div>
-            </div>
-        </div>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Home Sensor Analytics</h1>
+      <p class="sub">MQTT &rarr; validation &rarr; PostgreSQL, with retries and a dead-letter queue</p>
     </div>
+    <div class="controls">
+      <label for="window">Window</label>
+      <select id="window">
+        <option value="1h">Last hour</option>
+        <option value="6h">Last 6 hours</option>
+        <option value="24h" selected>Last 24 hours</option>
+        <option value="7d">Last 7 days</option>
+      </select>
+      <span id="updated">Loading…</span>
+    </div>
+  </header>
 
-    <script>
-        const statusEl = document.getElementById('chart-status');
+  {% if demo_mode %}
+  <div class="banner"><strong>Demo mode:</strong> readings come from simulated sensors running on the server, sent through the same ingestion pipeline as real MQTT traffic. About 1 in 40 messages is deliberately malformed to show the dead-letter queue working.</div>
+  {% endif %}
 
-        function showStatus(msg, isError) {
-            statusEl.textContent = msg;
-            statusEl.classList.remove('hidden', 'text-red-400', 'text-gray-400', 'text-amber-300');
-            statusEl.classList.add(isError ? 'text-red-400' : 'text-amber-300');
-        }
+  <section class="cards">
+    <div class="card"><div class="label">Readings stored</div><div class="value" id="s-total">–</div></div>
+    <div class="card"><div class="label">Readings, last hour</div><div class="value" id="s-hour">–</div></div>
+    <div class="card"><div class="label">Devices online</div><div class="value" id="s-devices">–</div></div>
+    <div class="card"><div class="label">Retries since start</div><div class="value" id="s-retries">–</div></div>
+    <div class="card"><div class="label">Dead letters pending</div><div class="value" id="s-dlq">–</div></div>
+  </section>
 
-        fetch('/api/chart-data')
-            .then(function (response) {
-                if (!response.ok) {
-                    throw new Error('HTTP ' + response.status + ' loading chart data');
-                }
-                return response.json();
-            })
-            .then(function (data) {
-                if (!Array.isArray(data)) {
-                    throw new Error('Chart API did not return a JSON array');
-                }
-                if (data.length === 0) {
-                    showStatus(
-                        'No temperature readings in the last 24 hours. If you use the demo seed: set DEMO_SEED_SECRET on Render, deploy, then run: curl -X POST YOUR_SITE/api/demo/seed -H "X-Demo-Seed-Secret: YOUR_SECRET"',
-                        false
-                    );
-                } else {
-                    statusEl.classList.add('hidden');
-                }
-                const traces = [{
-                    x: data.map(function (d) { return new Date(d.timestamp); }),
-                    y: data.map(function (d) { return d.value; }),
-                    type: 'scatter',
-                    mode: 'lines+markers',
-                    name: 'Temperature (C)'
-                }];
-                Plotly.newPlot('temp-chart', traces, {
-                    title: 'Temperature Over Time',
-                    xaxis: { title: 'Time' },
-                    yaxis: { title: 'Temperature (C)' }
-                });
-            })
-            .catch(function (err) {
-                showStatus('Could not load chart: ' + err.message, true);
-                Plotly.newPlot('temp-chart', [], {
-                    title: 'Temperature Over Time',
-                    xaxis: { title: 'Time' },
-                    yaxis: { title: 'Temperature (C)' }
-                });
-            });
-    </script>
+  <section class="grid2">
+    <div class="panel"><h2>Temperature (°C)</h2><div class="chartbox"><canvas id="c-temperature"></canvas></div></div>
+    <div class="panel"><h2>Humidity (%)</h2><div class="chartbox"><canvas id="c-humidity"></canvas></div></div>
+  </section>
+
+  <section class="grid2">
+    <div class="panel">
+      <h2>Devices</h2>
+      <div class="scroll"><table><thead><tr><th>Device</th><th>Location</th><th>Status</th><th>Battery</th><th>Last seen</th></tr></thead><tbody id="devices"></tbody></table></div>
+    </div>
+    <div class="panel">
+      <h2>Dead-letter queue (latest)</h2>
+      <div class="scroll"><table><thead><tr><th>When</th><th>Topic</th><th>Error</th><th>Retries</th></tr></thead><tbody id="dlq"></tbody></table></div>
+    </div>
+  </section>
+
+  <footer>JSON API: <code>/api/health</code>, <code>/api/stats</code>, <code>/api/devices</code>, <code>/api/readings</code>, <code>/api/chart-data</code>, <code>/api/dead-letters</code>. Refreshes every 10 seconds.</footer>
+</main>
+
+<script>
+const COLORS = ["#1F7A5C", "#C9643B", "#4F6BD8", "#A2489C", "#8A7A16"];
+const charts = {};
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const when = (iso) => iso ? new Date(iso).toLocaleString([], {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit"}) : "–";
+const getJSON = (url) => fetch(url, {cache: "no-store"}).then((r) => r.json());
+
+function drawChart(type, data) {
+  const css = getComputedStyle(document.documentElement);
+  const ink = css.getPropertyValue("--muted").trim(), grid = css.getPropertyValue("--line").trim();
+  const datasets = Object.entries(data.series).map(([device, points], i) => ({
+    label: device, data: points.map((p) => ({x: Date.parse(p.t), y: p.v})),
+    borderColor: COLORS[i % COLORS.length], backgroundColor: COLORS[i % COLORS.length],
+    borderWidth: 2, pointRadius: 0, tension: 0.25,
+  }));
+  const options = {
+    responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
+    interaction: {mode: "nearest", intersect: false},
+    scales: {
+      x: {type: "linear", ticks: {color: ink, maxTicksLimit: 6, callback: (v) => new Date(v).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})}, grid: {color: grid}},
+      y: {ticks: {color: ink}, grid: {color: grid}},
+    },
+    plugins: {legend: {labels: {color: ink, boxWidth: 12}},
+              tooltip: {callbacks: {title: (items) => when(new Date(items[0].parsed.x).toISOString())}}},
+  };
+  if (charts[type]) { charts[type].data.datasets = datasets; charts[type].options = options; charts[type].update(); }
+  else charts[type] = new Chart(document.getElementById("c-" + type), {type: "line", data: {datasets}, options});
+}
+
+async function refresh() {
+  const w = document.getElementById("window").value;
+  try {
+    const [stats, devices, dlq, temp, hum] = await Promise.all([
+      getJSON("/api/stats"), getJSON("/api/devices"), getJSON("/api/dead-letters?limit=8"),
+      getJSON(`/api/chart-data?sensor_type=temperature&window=${w}`), getJSON(`/api/chart-data?sensor_type=humidity&window=${w}`),
+    ]);
+    document.getElementById("s-total").textContent = stats.readings_total.toLocaleString();
+    document.getElementById("s-hour").textContent = stats.readings_last_hour.toLocaleString();
+    document.getElementById("s-devices").textContent = `${stats.devices_online} / ${stats.devices_total}`;
+    document.getElementById("s-retries").textContent = stats.since_start.retries.toLocaleString();
+    document.getElementById("s-dlq").textContent = stats.dead_letters_pending.toLocaleString();
+    document.getElementById("devices").innerHTML = devices.length ? devices.map((d) => `<tr>
+        <td>${esc(d.name || d.device_id)}</td><td>${esc(d.location || "–")}</td>
+        <td><span class="pill ${d.status === "online" ? "online" : "offline"}">${esc(d.status)}</span></td>
+        <td>${d.battery_level == null ? "–" : d.battery_level.toFixed(1) + "%"}</td><td>${when(d.last_seen)}</td></tr>`).join("")
+      : `<tr><td colspan="5" class="empty">No devices yet.</td></tr>`;
+    document.getElementById("dlq").innerHTML = dlq.length ? dlq.map((d) => `<tr>
+        <td>${when(d.created_at + "Z")}</td><td>${esc(d.topic)}</td><td class="wrap">${esc(d.error)}</td><td>${d.retry_count}</td></tr>`).join("")
+      : `<tr><td colspan="4" class="empty">Empty. Every message so far was stored.</td></tr>`;
+    drawChart("temperature", temp);
+    drawChart("humidity", hum);
+    document.getElementById("updated").textContent = "Updated " + new Date().toLocaleTimeString();
+  } catch (err) {
+    document.getElementById("updated").textContent = "Update failed, retrying";
+  }
+}
+document.getElementById("window").addEventListener("change", refresh);
+refresh();
+setInterval(refresh, 10000);
+</script>
 </body>
 </html>
