@@ -2,17 +2,20 @@
 
 Messages go through exactly the same ingest pipeline as real MQTT traffic.
 About 1 in 40 messages is deliberately malformed so the dead-letter queue
-can be seen working.
+can be seen working. On free hosting the database is wiped whenever the server
+restarts, so an empty database is first backfilled with simulated history
+(DEMO_BACKFILL_HOURS, default 6) so the charts are never blank.
 """
 import json
 import logging
+import os
 import random
 import threading
 import time
 from datetime import timedelta
 
 from app import db
-from app.ingest import handle_message
+from app.ingest import SENSOR_UNITS, handle_message
 from app.models import DeadLetter, SensorReading, utcnow
 
 log = logging.getLogger(__name__)
@@ -56,9 +59,36 @@ def prune(app, days):
         db.session.commit()
 
 
+def backfill(app, hours, step_minutes=5):
+    """Insert simulated history into an empty database. Returns (rows added, last values)."""
+    state = {}
+    with app.app_context():
+        if hours <= 0 or SensorReading.query.first() is not None:
+            return 0, state
+        rng, now = random.Random(), utcnow()
+        steps = int(hours * 60 / step_minutes)
+        rows = []
+        for i in range(steps, 0, -1):
+            ts = now - timedelta(minutes=step_minutes * i)
+            for device in DEVICES:
+                for sensor in device["sensors"]:
+                    value = _next_value(state, f"{device['id']}:{sensor}", sensor, rng)
+                    rows.append(SensorReading(device_id=device["id"], sensor_type=sensor, value=value,
+                                              unit=SENSOR_UNITS[sensor], location=device["location"], timestamp=ts))
+        db.session.add_all(rows)
+        db.session.commit()
+    log.info("Demo mode: backfilled %d simulated readings covering %s hours", len(rows), hours)
+    return len(rows), state
+
+
 def _run(app):
     rng = random.Random()
-    state, battery = {}, {d["id"]: rng.uniform(70, 100) for d in DEVICES}
+    try:
+        _, state = backfill(app, float(os.environ.get("DEMO_BACKFILL_HOURS", "6")))
+    except Exception:
+        log.exception("Demo backfill failed")
+        state = {}
+    battery = {d["id"]: rng.uniform(70, 100) for d in DEVICES}
     count, last_prune = 0, 0.0
     interval = app.config["DEMO_INTERVAL_SECONDS"]
     while True:
