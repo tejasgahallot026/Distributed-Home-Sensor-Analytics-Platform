@@ -65,7 +65,7 @@
   </header>
 
   {% if demo_mode %}
-  <div class="banner"><strong>Demo mode:</strong> readings come from simulated sensors running on the server, sent through the same ingestion pipeline as real MQTT traffic. About 1 in 40 messages is deliberately malformed to show the dead-letter queue working.</div>
+  <div class="banner"><strong>Demo mode:</strong> readings come from simulated sensors running on the server, sent through the same ingestion pipeline as real MQTT traffic. About 1 in 40 messages is deliberately malformed to show the dead-letter queue working. Earlier history is simulated and backfilled when the server starts.</div>
   {% endif %}
 
   <section class="cards">
