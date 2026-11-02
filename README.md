@@ -2,6 +2,8 @@
 
 A real-time IoT data pipeline. Simulated home sensors publish readings over **MQTT**. A **Flask** service validates each message and stores it in **PostgreSQL**, retrying transient database failures and sending anything it cannot store to a **dead-letter queue** that can be inspected and replayed. A live dashboard shows readings, device health and pipeline statistics.
 
+**Live demo:** https://distributed-home-sensor-analytics.onrender.com (free hosting, so the first load after a quiet period can take about a minute)
+
 ## Architecture
 
 ```
