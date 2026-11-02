@@ -1,35 +1,33 @@
 import logging
 import os
-from threading import Thread
 
 from flask import Flask
 from flask_cors import CORS
-from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
-migrate = Migrate()
 
 
-def create_app():
-    template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "templates")
-    app = Flask(__name__, template_folder=template_dir)
+def create_app(test_config=None):
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    app = Flask(__name__, template_folder=os.path.join(root, "templates"))
 
     from app.config import DevelopmentConfig, ProductionConfig, resolve_sqlalchemy_database_uri
 
     env = os.environ.get("FLASK_ENV", "production")
     app.config.from_object(DevelopmentConfig if env == "development" else ProductionConfig)
-
-    db_uri = resolve_sqlalchemy_database_uri()
-    if not db_uri:
+    app.config["SQLALCHEMY_DATABASE_URI"] = resolve_sqlalchemy_database_uri()
+    if test_config:
+        app.config.update(test_config)
+    if not app.config["SQLALCHEMY_DATABASE_URI"]:
         raise RuntimeError(
-            "DATABASE_URL is not set. In Render: Web Service → Environment → Link your PostgreSQL "
-            "database (or add DATABASE_URL manually from the database's Connections tab)."
+            "DATABASE_URL is not set. Point it at a PostgreSQL database, "
+            "or set FLASK_ENV=development to use a local SQLite file."
         )
-    app.config["SQLALCHEMY_DATABASE_URI"] = db_uri
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     db.init_app(app)
-    migrate.init_app(app, db)
     CORS(app)
 
     from app.api import api_bp
@@ -39,19 +37,19 @@ def create_app():
     app.register_blueprint(api_bp, url_prefix="/api")
 
     with app.app_context():
+        from app import models  # noqa: F401  (register tables)
         db.create_all()
 
-    if os.environ.get("ENABLE_MQTT") == "1":
-        try:
-            from app.mqtt_handler import MQTTHandler
+    if app.config.get("ENABLE_MQTT"):
+        from app.mqtt_handler import MQTTHandler
 
-            handler = MQTTHandler(app.config["MQTT_BROKER_URL"])
+        handler = MQTTHandler(app, app.config["MQTT_BROKER_URL"])
+        app.extensions["mqtt"] = handler
+        handler.start()
 
-            def run_mqtt():
-                handler.connect()
+    if app.config.get("DEMO_MODE"):
+        from app.demo import start_demo
 
-            Thread(target=run_mqtt, daemon=True).start()
-        except Exception:
-            logging.exception("MQTT startup failed")
+        start_demo(app)
 
     return app

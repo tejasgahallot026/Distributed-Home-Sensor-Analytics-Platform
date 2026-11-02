@@ -1,132 +1,163 @@
-from flask import Blueprint, jsonify, request
+import hmac
+from datetime import timedelta
+
+from flask import Blueprint, current_app, jsonify, request
+from sqlalchemy import func, text
+
 from app import db
-from app.models import SensorReading, DeviceStatus
-from sqlalchemy import func
-from datetime import datetime, timedelta
-import os
-import random
+from app.ingest import handle_message, metrics_snapshot, replay
+from app.models import DeadLetter, DeviceStatus, SensorReading, utcnow
 
-api_bp = Blueprint('api', __name__)
+api_bp = Blueprint("api", __name__)
 
-
-@api_bp.route('/chart-data', methods=['GET'])
-def chart_data():
-    cutoff = datetime.utcnow() - timedelta(hours=24)
-    recent_data = (
-        SensorReading.query.filter(
-            SensorReading.sensor_type == 'temperature',
-            SensorReading.timestamp >= cutoff,
-        )
-        .order_by(SensorReading.timestamp)
-        .all()
-    )
-    return jsonify(
-        [
-            {
-                'timestamp': r.timestamp.isoformat(),
-                'value': r.value,
-                'device_id': r.device_id,
-            }
-            for r in recent_data
-        ]
-    )
+WINDOWS = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}
+ONLINE_AFTER = timedelta(minutes=5)
 
 
-@api_bp.route('/sensors/<device_id>', methods=['GET'])
-def get_sensor_data(device_id):
-    time_window = request.args.get('window', '1h')
-    if time_window == '1h':
-        window = datetime.utcnow() - timedelta(hours=1)
-    elif time_window == '24h':
-        window = datetime.utcnow() - timedelta(days=1)
-    else:
-        window = datetime.utcnow() - timedelta(hours=24)
-    
-    readings = db.session.query(
-        SensorReading.sensor_type,
-        func.avg(SensorReading.value).label('avg_value'),
-        func.max(SensorReading.value).label('max_value'),
-        func.min(SensorReading.value).label('min_value'),
-        func.count().label('count')
-    ).filter(
-        SensorReading.device_id == device_id,
-        SensorReading.timestamp >= window
-    ).group_by(SensorReading.sensor_type).all()
-    
-    return jsonify([{
-        'sensor_type': r.sensor_type,
-        'avg_value': float(r.avg_value),
-        'max_value': float(r.max_value),
-        'min_value': float(r.min_value),
-        'count': r.count
-    } for r in readings])
+def _since():
+    hours = WINDOWS.get(request.args.get("window", "24h"), 24)
+    return utcnow() - timedelta(hours=hours)
 
-@api_bp.route('/devices', methods=['GET'])
-def get_devices():
+
+def _iso(dt):
+    return dt.isoformat() + "Z" if dt else None
+
+
+def _authorised():
+    expected = current_app.config.get("INGEST_TOKEN", "")
+    supplied = request.headers.get("X-Ingest-Token", "")
+    return bool(expected) and hmac.compare_digest(expected, supplied)
+
+
+def _token_error():
+    if not current_app.config.get("INGEST_TOKEN"):
+        return jsonify(error="Write endpoints are disabled. Set INGEST_TOKEN to enable them."), 403
+    return jsonify(error="Missing or invalid X-Ingest-Token header."), 401
+
+
+@api_bp.get("/health")
+def health():
+    try:
+        db.session.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        db.session.rollback()
+        db_ok = False
+    mqtt = current_app.extensions.get("mqtt")
+    body = {
+        "status": "healthy" if db_ok else "degraded",
+        "database": "ok" if db_ok else "unreachable",
+        "mqtt": "disabled" if mqtt is None else ("connected" if mqtt.connected else "disconnected"),
+        "demo_mode": bool(current_app.config.get("DEMO_MODE")),
+        "timestamp": _iso(utcnow()),
+    }
+    return jsonify(body), 200 if db_ok else 503
+
+
+@api_bp.get("/stats")
+def stats():
+    now = utcnow()
+    last = db.session.query(func.max(SensorReading.timestamp)).scalar()
     devices = DeviceStatus.query.all()
-    return jsonify([{
-        'device_id': d.device_id,
-        'name': d.name,
-        'location': d.location,
-        'status': d.status,
-        'last_seen': d.last_seen.isoformat(),
-        'battery_level': d.battery_level
-    } for d in devices])
-
-@api_bp.route('/health', methods=['GET'])
-def health_check():
-    return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()})
+    return jsonify(
+        readings_total=SensorReading.query.count(),
+        readings_last_hour=SensorReading.query.filter(SensorReading.timestamp >= now - timedelta(hours=1)).count(),
+        last_reading_at=_iso(last),
+        devices_total=len(devices),
+        devices_online=sum(1 for d in devices if d.last_seen and now - d.last_seen <= ONLINE_AFTER),
+        dead_letters_pending=DeadLetter.query.filter_by(status="pending").count(),
+        since_start=metrics_snapshot(),
+    )
 
 
-@api_bp.route('/demo/seed', methods=['POST'])
-def demo_seed():
-    expected = os.environ.get('DEMO_SEED_SECRET', '').strip()
-    if not expected:
-        return jsonify(
-            {'error': 'Demo seed is disabled. Set DEMO_SEED_SECRET in Render, redeploy, then POST again.'}
-        ), 503
-    supplied = (request.headers.get('X-Demo-Seed-Secret') or '').strip()
-    if not supplied and request.is_json:
-        supplied = (request.get_json(silent=True) or {}).get('secret', '') or ''
-    if supplied != expected:
-        return jsonify({'error': 'Invalid or missing secret.'}), 401
+@api_bp.get("/devices")
+def devices():
+    now = utcnow()
+    rows = DeviceStatus.query.order_by(DeviceStatus.device_id).all()
+    return jsonify([
+        {
+            "device_id": d.device_id,
+            "name": d.name,
+            "location": d.location,
+            "status": d.status if d.last_seen and now - d.last_seen <= ONLINE_AFTER else "offline",
+            "last_seen": _iso(d.last_seen),
+            "battery_level": d.battery_level,
+        }
+        for d in rows
+    ])
 
-    device_id = 'demo-living-room'
-    now = datetime.utcnow()
-    n = 36
-    base = 21.0
-    rows = []
-    for i in range(n):
-        hours_ago = 24 * (1 - (i + 1) / n)
-        ts = now - timedelta(hours=hours_ago)
-        base += random.uniform(-0.35, 0.35)
-        base = max(18.0, min(26.0, base))
-        rows.append(
-            SensorReading(
-                device_id=device_id,
-                sensor_type='temperature',
-                value=round(base, 2),
-                unit='°C',
-                timestamp=ts,
-                location='Demo',
-            )
-        )
 
-    device = DeviceStatus.query.filter_by(device_id=device_id).first()
-    if not device:
-        device = DeviceStatus(
-            device_id=device_id,
-            name='Demo thermostat',
-            location='Living room',
-            last_seen=now,
-            status='online',
-            battery_level=87.5,
-        )
-        db.session.add(device)
-    else:
-        device.last_seen = now
-        device.status = 'online'
+@api_bp.get("/readings")
+def readings():
+    query = SensorReading.query.filter(SensorReading.timestamp >= _since())
+    if request.args.get("device_id"):
+        query = query.filter(SensorReading.device_id == request.args["device_id"])
+    if request.args.get("sensor_type"):
+        query = query.filter(SensorReading.sensor_type == request.args["sensor_type"])
+    limit = min(max(request.args.get("limit", 500, type=int), 1), 5000)
+    rows = query.order_by(SensorReading.timestamp.desc()).limit(limit).all()
+    return jsonify([
+        {"device_id": r.device_id, "sensor_type": r.sensor_type, "value": r.value,
+         "unit": r.unit, "location": r.location, "timestamp": _iso(r.timestamp)}
+        for r in reversed(rows)
+    ])
 
-    db.session.add_all(rows)
-    db.session.commit()
-    return jsonify({'ok': True, 'inserted_readings': len(rows), 'device_id': device_id})
+
+@api_bp.get("/chart-data")
+def chart_data():
+    """Time series for one sensor type, grouped by device."""
+    sensor_type = request.args.get("sensor_type", "temperature")
+    rows = (SensorReading.query
+            .filter(SensorReading.sensor_type == sensor_type, SensorReading.timestamp >= _since())
+            .order_by(SensorReading.timestamp).limit(5000).all())
+    series = {}
+    for r in rows:
+        series.setdefault(r.device_id, []).append({"t": _iso(r.timestamp), "v": r.value})
+    return jsonify(sensor_type=sensor_type, series=series)
+
+
+@api_bp.get("/sensors/<device_id>")
+def sensor_summary(device_id):
+    rows = (db.session.query(
+                SensorReading.sensor_type,
+                func.avg(SensorReading.value), func.min(SensorReading.value),
+                func.max(SensorReading.value), func.count())
+            .filter(SensorReading.device_id == device_id, SensorReading.timestamp >= _since())
+            .group_by(SensorReading.sensor_type).all())
+    return jsonify([
+        {"sensor_type": t, "avg_value": round(float(avg), 2), "min_value": float(lo),
+         "max_value": float(hi), "count": n}
+        for t, avg, lo, hi, n in rows
+    ])
+
+
+@api_bp.get("/dead-letters")
+def dead_letters():
+    query = DeadLetter.query
+    if request.args.get("status"):
+        query = query.filter_by(status=request.args["status"])
+    limit = min(max(request.args.get("limit", 50, type=int), 1), 500)
+    return jsonify([d.to_dict() for d in query.order_by(DeadLetter.created_at.desc()).limit(limit)])
+
+
+@api_bp.post("/ingest")
+def ingest():
+    """HTTP alternative to MQTT: {"topic": "home/sensors/<id>/data", "payload": {...}}"""
+    if not _authorised():
+        return _token_error()
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or "topic" not in body or "payload" not in body:
+        return jsonify(error='Send JSON like {"topic": "...", "payload": {...}}.'), 400
+    raw = body["payload"] if isinstance(body["payload"], str) else jsonify(body["payload"]).get_data()
+    ok, detail = handle_message(current_app._get_current_object(), body["topic"], raw)
+    return (jsonify(status="stored"), 202) if ok else (jsonify(status="dead_lettered", error=detail), 422)
+
+
+@api_bp.post("/dead-letters/<int:letter_id>/replay")
+def replay_dead_letter(letter_id):
+    if not _authorised():
+        return _token_error()
+    ok, detail = replay(current_app._get_current_object(), letter_id)
+    if detail == "not found":
+        return jsonify(error="Dead letter not found."), 404
+    return (jsonify(status="replayed"), 200) if ok else (jsonify(status="failed", error=detail), 409)
