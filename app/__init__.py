@@ -40,6 +40,20 @@ def create_app(test_config=None):
         from app import models  # noqa: F401  (register tables)
         db.create_all()
 
+    # Under Gunicorn, gunicorn.conf.py starts these after the worker forks
+    # (threads do not survive a fork, which matters with --preload).
+    if os.environ.get("BACKGROUND_SERVICES") != "post_fork":
+        start_background_services(app)
+
+    return app
+
+
+def start_background_services(app):
+    """Start the MQTT subscriber and/or demo simulator once per process."""
+    if app.extensions.get("background_started"):
+        return
+    app.extensions["background_started"] = True
+
     if app.config.get("ENABLE_MQTT"):
         from app.mqtt_handler import MQTTHandler
 
@@ -51,5 +65,3 @@ def create_app(test_config=None):
         from app.demo import start_demo
 
         start_demo(app)
-
-    return app
