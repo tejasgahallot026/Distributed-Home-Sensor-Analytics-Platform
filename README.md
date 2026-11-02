@@ -41,7 +41,7 @@ docker compose exec mosquitto mosquitto_pub -t home/sensors/test/data -m '{"type
 
 ## Cloud demo mode
 
-Free cloud hosts such as Render do not run an MQTT broker, so the deployed demo sets `DEMO_MODE=1`. Simulated sensors then run inside the web process and send their messages through the same `handle_message` pipeline. About 1 in 40 messages is deliberately malformed, so the dead-letter queue has something to show. Readings older than 7 days are pruned. The dashboard labels this mode clearly.
+Free cloud hosts such as Render do not run an MQTT broker, so the deployed demo sets `DEMO_MODE=1`. Simulated sensors then run inside the web process and send their messages through the same `handle_message` pipeline. About 1 in 40 messages is deliberately malformed, so the dead-letter queue has something to show. Readings older than 7 days are pruned. Free hosting wipes the database on restart, so the demo stores data in SQLite and, when the database is empty, backfills 6 hours of simulated history (`DEMO_BACKFILL_HOURS`). The dashboard labels this mode clearly.
 
 ## API
 
