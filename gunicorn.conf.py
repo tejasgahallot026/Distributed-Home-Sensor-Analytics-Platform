@@ -1,8 +1,8 @@
-bind = "0.0.0.0:$PORT"
-workers = 3
-worker_class = "sync"
-worker_connections = 1000
-max_requests = 1000
-max_requests_jitter = 100
+# Loaded automatically by gunicorn. Must stay at one worker: the MQTT
+# subscriber and demo thread run inside the web process.
+import os
+
+bind = f"0.0.0.0:{os.environ.get('PORT', '5000')}"
+workers = 1
+threads = 4
 timeout = 120
-keepalive = 5

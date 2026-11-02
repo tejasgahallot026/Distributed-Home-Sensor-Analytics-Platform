@@ -1,9 +1,12 @@
+# Render has no MQTT broker, so the cloud deployment runs in demo mode:
+# simulated sensors inside the web process, sent through the same ingest pipeline.
 services:
   - type: web
     name: home-sensor-platform
     env: python
-    buildCommand: pip install -r requirements.txt && pip install gunicorn
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --timeout 120 wsgi:application
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 wsgi:application
+    healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.11
@@ -11,8 +14,8 @@ services:
         fromDatabase:
           name: home-sensors-db
           property: connectionString
-      - key: MQTT_BROKER_URL
-        value: wss://mqtt.render.com:8083
+      - key: DEMO_MODE
+        value: "1"
       - key: SECRET_KEY
         generateValue: true
     plan: starter
